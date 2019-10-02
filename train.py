@@ -22,6 +22,7 @@ from utils import Bar, Logger, AverageMeter, accuracy, mkdir_p, savefig
 from tensorboardX import SummaryWriter
 
 from dataset.cifar100_mixup import collate_mixup
+from dataset.cifar100_mixup import collate_mixup_unsupervised
 
 parser = argparse.ArgumentParser(description='PyTorch MixMatch Training')
 # Optimization options
@@ -108,8 +109,8 @@ def main():
     elif args.dataset == 'cifar100':
         train_labeled_set, train_unlabeled_set, val_set, test_set = dataset.get_cifar100('./data', args.n_labeled, transform_train=transform_train, transform_val=transform_val)
         if args.supercat:
-            labeled_trainloader = data.DataLoader(train_labeled_set, batch_size=args.batch_size, shuffle=True, num_workers=0, drop_last=True, collate_fn=collate_mixup)
-            unlabeled_trainloader = data.DataLoader(train_unlabeled_set, batch_size=args.batch_size, shuffle=True, num_workers=0, drop_last=True, collate_fn=collate_mixup)
+            labeled_trainloader = data.DataLoader(train_labeled_set, batch_size=args.batch_size//2, shuffle=True, num_workers=0, drop_last=True, collate_fn=collate_mixup)
+            unlabeled_trainloader = data.DataLoader(train_unlabeled_set, batch_size=args.batch_size//2, shuffle=True, num_workers=0, drop_last=True, collate_fn=collate_mixup_unsupervised)
         else:
             labeled_trainloader = data.DataLoader(train_labeled_set, batch_size=args.batch_size, shuffle=True, num_workers=0, drop_last=True)
             unlabeled_trainloader = data.DataLoader(train_unlabeled_set, batch_size=args.batch_size, shuffle=True, num_workers=0, drop_last=True)
@@ -287,7 +288,7 @@ def train(labeled_trainloader, unlabeled_trainloader, model, optimizer, ema_opti
 
         if supercat:
             input_a, input_b = all_inputs[::2], all_inputs[1::2]
-            targets_a, targets_b = all_targets[::2], all_targets[1::2]
+            target_a, target_b = all_targets[::2], all_targets[1::2]
         else:
 
             idx = torch.randperm(all_inputs.size(0))

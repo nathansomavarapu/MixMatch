@@ -125,8 +125,8 @@ def get_cifar100(root, n_labeled,
     base_dataset = torchvision.datasets.CIFAR100(root, train=True, download=download)
     train_labeled_idxs, train_unlabeled_idxs, val_idxs = train_val_split(base_dataset.targets, int(n_labeled/100))
 
-    train_labeled_dataset = CIFAR100_labeled(root, train_labeled_idxs, train=True, transform=transform_train)
-    train_unlabeled_dataset = CIFAR100_unlabeled(root, train_unlabeled_idxs, train=True, transform=TransformTwice(transform_train), debug=debug)
+    train_labeled_dataset = CIFAR100_labeled_mixup(root, train_labeled_idxs, train=True, transform=transform_train)
+    train_unlabeled_dataset = CIFAR100_unlabeled_mixup(root, train_unlabeled_idxs, train=True, transform=TransformTwice(transform_train), debug=debug)
     val_dataset = CIFAR100_labeled(root, val_idxs, train=True, transform=transform_val, download=True)
     test_dataset = CIFAR100_labeled(root, train=False, transform=transform_val, download=True)
 
@@ -228,6 +228,37 @@ class CIFAR100_labeled(torchvision.datasets.CIFAR100):
         super(CIFAR100_labeled, self).__init__(root, train=train,
                  transform=transform, target_transform=target_transform,
                  download=download)
+        if indexs is not None:
+            self.data = self.data[indexs]
+            self.targets = np.array(self.targets)[indexs]
+        self.data = transpose(normalise(self.data))
+
+    def __getitem__(self, index):
+        """
+        Args:
+            index (int): Index
+
+        Returns:
+            tuple: (image, target) where target is index of the target class.
+        """
+        img, target = self.data[index], self.targets[index]
+
+        if self.transform is not None:
+            img = self.transform(img)
+
+        if self.target_transform is not None:
+            target = self.target_transform(target)
+
+        return img, target
+
+class CIFAR100_labeled_mixup(torchvision.datasets.CIFAR100):
+
+    def __init__(self, root, indexs=None, train=True,
+                 transform=None, target_transform=None,
+                 download=False):
+        super(CIFAR100_labeled_mixup, self).__init__(root, train=train,
+                 transform=transform, target_transform=target_transform,
+                 download=download)
         
         if self.train:
             downloaded_list = self.train_list
@@ -251,7 +282,7 @@ class CIFAR100_labeled(torchvision.datasets.CIFAR100):
         supercatagories = torch.unique(torch.Tensor(self.coarse_targets))
         self.data_idxs = []
         for cat in supercatagories:
-            it = iter((torch.Tensor(self.coarse_targets) == cat).byte().nonzero().numpy())
+            it = iter((torch.Tensor(self.coarse_targets) == cat).byte().nonzero().squeeze(-1).numpy())
             self.data_idxs.extend(zip(it,it))
         
         self.data = transpose(normalise(self.data))
@@ -262,43 +293,100 @@ class CIFAR100_labeled(torchvision.datasets.CIFAR100):
             index (int): Index
 
         Returns:
-            tuple: (image, target) where target is index of the target class.
+            tuple: ([image1, image2], [target1, target2]) where target is index of the target class 
+            and both images come from the same superclass.
         """
         idx1, idx2 = self.data_idxs[index]
 
         img1, target1 = self.data[idx1], self.targets[idx1]
         img2, target2 = self.data[idx2], self.targets[idx2]
-        
-        print(type(img1))
-        exit()
 
         if self.transform is not None:
-            img1 = self.transform(img1).unsqueeze(0)
-            img2 = self.transform(img2).unsqueeze(0)
+            img1 = self.transform(img1)
+            img2 = self.transform(img2)
+
+        img1 = img1.unsqueeze(0)
+        img2 = img2.unsqueeze(0)
 
         if self.target_transform is not None:
-            target1 = self.target_transform(target1).unsqueeze(0)
-            target2 = self.target_transform(target2).unsqueeze(0)
+            target1 = self.target_transform(target1)
+            target2 = self.target_transform(target2)
+        
+        # target1 = target1.unsqueeze(0)
+        # target2 = target2.unsqueeze(0)
+        
 
-        return torch.cat([img1,img2]), torch.cat([target1, target2])
+        return torch.cat([img1,img2]), torch.cat([torch.Tensor([target1]), torch.Tensor([target2])]).long()
     
     def __len__(self):
         return len(self.data_idxs)
     
 
-class CIFAR100_unlabeled(CIFAR100_labeled):
+class CIFAR100_unlabeled_mixup(CIFAR100_labeled_mixup):
 
     def __init__(self, root, indexs, train=True,
                  transform=None, target_transform=None,
                  download=False, debug=False):
-        super(CIFAR100_unlabeled, self).__init__(root, indexs, train=train,
+        super(CIFAR100_unlabeled_mixup, self).__init__(root, indexs, train=train,
                  transform=transform, target_transform=target_transform,
                  download=download)
         
         # Debug keeps the unsupervised classes for oracle comparisons
         if not debug:
             self.targets = np.array([-1 for i in range(len(self.targets))])
+    
+    def __getitem__(self, index):
+        """
+        Args:
+            index (int): Index
+
+        Returns:
+            tuple: ([image1, image2], [target1, target2]) where target is index of the target class 
+            and both images come from the same superclass.
+        """
+        idx1, idx2 = self.data_idxs[index]
+
+        img1, target1 = self.data[idx1], self.targets[idx1]
+        img2, target2 = self.data[idx2], self.targets[idx2]
+
+        if self.transform is not None:
+            img1, img1_t = self.transform(img1)
+            img2, img2_t = self.transform(img2)
+
+        img1 = img1.unsqueeze(0)
+        img1_t = img1_t.unsqueeze(0)
+
+        img2 = img2.unsqueeze(0)
+        img2_t = img2_t.unsqueeze(0)
+
+        if self.target_transform is not None:
+            target1 = self.target_transform(target1)
+            target2 = self.target_transform(target2)
+        
+        # target1 = target1.unsqueeze(0)
+        # target2 = target2.unsqueeze(0)
+
+        return (torch.cat([img1, img2]), torch.cat([img1_t, img2_t])), torch.cat([torch.Tensor([target1]), torch.Tensor([target2])]).long()
 
 def collate_mixup(batch):
-    torch.cat(batch)
+    imgs = []
+    labels = []
+    for img, lab in batch:
+        imgs.append(img)
+        labels.append(lab)
+        
+    return torch.cat(imgs), torch.cat(labels)
+
+def collate_mixup_unsupervised(batch):
+
+    imgs1 = []
+    imgs2 = []
+    labels = []
+
+    for (img1, img2), lab in batch:
+        imgs1.append(img1)
+        imgs2.append(img2)
+        labels.append(lab)
+        
+    return (torch.cat(imgs1), torch.cat(imgs2)), torch.cat(labels)
         
